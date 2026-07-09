@@ -188,8 +188,9 @@ function groupPdfItemsIntoLines(items: PdfTextItem[], viewportWidth: number) {
 
 async function parsePdf(file: File) {
   const pdfjsLib = await import("pdfjs-dist");
+  const workerVersion = "version" in pdfjsLib ? String(pdfjsLib.version) : "5.4.54";
   pdfjsLib.GlobalWorkerOptions.workerSrc =
-    "https://unpkg.com/pdfjs-dist@5.4.54/build/pdf.worker.min.mjs";
+    `https://unpkg.com/pdfjs-dist@${workerVersion}/build/pdf.worker.min.mjs`;
   const data = new Uint8Array(await file.arrayBuffer());
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   const sections: BookSection[] = [];
