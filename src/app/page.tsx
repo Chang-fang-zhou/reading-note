@@ -12,7 +12,7 @@ import {
   saveBook,
   saveNotes
 } from "@/lib/storage";
-import { formatTimestamp, makeId } from "@/lib/utils";
+import { formatTimestamp, getErrorMessage, makeId } from "@/lib/utils";
 
 const SYNC_KEY = "reader-notes-workspace-id";
 
@@ -245,7 +245,8 @@ export default function HomePage() {
       await refreshBooks(book.id);
       setStatus(`已导入《${book.title}》`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "导入失败");
+      console.error("Book import failed:", error);
+      setStatus(getErrorMessage(error));
     } finally {
       setIsBusy(false);
       event.target.value = "";

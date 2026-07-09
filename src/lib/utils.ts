@@ -47,3 +47,22 @@ export function formatTimestamp(value: string) {
     minute: "2-digit"
   });
 }
+
+export function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    const maybeMessage = Reflect.get(error, "message");
+    if (typeof maybeMessage === "string" && maybeMessage.trim()) {
+      return maybeMessage;
+    }
+  }
+
+  return "导入失败，请换一个文件再试";
+}
