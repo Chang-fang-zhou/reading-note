@@ -72,7 +72,10 @@ function getBlockOffset(blockElement: HTMLElement, range: Range, edge: "start" |
   return -1;
 }
 
-function renderTextWithHighlight(block: BookBlock, highlights: Array<{ start: number; end: number; id: string }>) {
+function renderTextWithHighlight(
+  block: BookBlock,
+  highlights: Array<{ start: number; end: number; id: string }>
+) {
   if (highlights.length === 0) {
     return [block.text];
   }
@@ -112,29 +115,26 @@ function getBlockHighlights(
   const { blocks, blockOffsets } = buildSectionIndex(section);
   const blockIndex = blocks.findIndex((item) => item.id === block.id);
   const blockStart = blockOffsets.get(block.id) ?? 0;
-  const blockEnd = blockStart + block.text.length;
 
   return sectionNotes
     .map((note) => {
-      const normalizedStart =
+      const normalized =
         note.startAnchor && note.endAnchor
           ? (() => {
               const startIndex = blocks.findIndex((item) => item.id === note.startAnchor?.blockId);
               const endIndex = blocks.findIndex((item) => item.id === note.endAnchor?.blockId);
 
-              if (startIndex === -1 || endIndex === -1 || blockIndex < startIndex || blockIndex > endIndex) {
+              if (
+                startIndex === -1 ||
+                endIndex === -1 ||
+                blockIndex < startIndex ||
+                blockIndex > endIndex
+              ) {
                 return null;
               }
 
-              const start =
-                blockIndex === startIndex
-                  ? note.startAnchor.offset
-                  : 0;
-              const end =
-                blockIndex === endIndex
-                  ? note.endAnchor.offset
-                  : block.text.length;
-
+              const start = blockIndex === startIndex ? note.startAnchor.offset : 0;
+              const end = blockIndex === endIndex ? note.endAnchor.offset : block.text.length;
               return { start, end };
             })()
           : {
@@ -142,12 +142,11 @@ function getBlockHighlights(
               end: Math.min(note.endOffset - blockStart, block.text.length)
             };
 
-      if (!normalizedStart) {
+      if (!normalized) {
         return null;
       }
 
-      const { start, end } = normalizedStart;
-
+      const { start, end } = normalized;
       if (end <= 0 || start >= block.text.length || start === end) {
         return null;
       }

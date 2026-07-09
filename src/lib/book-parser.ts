@@ -19,6 +19,15 @@ type PdfTextItem = {
   fontName?: string;
 };
 
+type EpubSectionLike = {
+  idref?: string;
+  href?: string;
+  linear?: boolean | string;
+  render?: () => Promise<string>;
+  load?: (loader: unknown) => Promise<unknown>;
+  unload?: () => void;
+};
+
 function extensionToFormat(name: string): BookFormat | null {
   const ext = name.toLowerCase().split(".").pop();
   if (ext === "epub" || ext === "pdf" || ext === "txt" || ext === "md" || ext === "docx") {
@@ -57,6 +66,49 @@ function buildSectionsFromText(source: string, prefix: string) {
       [buildBlock(`${prefix}_${index + 1}_block_1`, "paragraph", text)]
     )
   );
+}
+
+function collectEpubBlocks(root: ParentNode, sectionId: string) {
+  const blocks: BookBlock[] = [];
+  const selectors = "h1, h2, h3, h4, p, li, blockquote, pre";
+  const nodes = Array.from(root.querySelectorAll(selectors));
+
+  nodes.forEach((node, index) => {
+    const text = node.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    if (!text) {
+      return;
+    }
+
+    const tagName = node.tagName.toLowerCase();
+    const kind: BookBlock["kind"] =
+      tagName === "h1"
+        ? "title"
+        : tagName === "h2" || tagName === "h3" || tagName === "h4"
+          ? "subtitle"
+          : tagName === "blockquote"
+            ? "quote"
+            : tagName === "li"
+              ? "list"
+              : tagName === "pre"
+                ? "code"
+                : "paragraph";
+
+    blocks.push(buildBlock(`${sectionId}_block_${index + 1}`, kind, text));
+  });
+
+  if (blocks.length === 0) {
+    const fallback = root.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    if (fallback) {
+      blocks.push(buildBlock(`${sectionId}_block_1`, "paragraph", fallback));
+    }
+  }
+
+  return blocks;
+}
+
+function extractTextFromMarkup(markup: string) {
+  const doc = new DOMParser().parseFromString(markup, "text/html");
+  return collectEpubBlocks(doc.body ?? doc, "fallback");
 }
 
 async function parseTxtLike(file: File, format: BookFormat) {
@@ -178,65 +230,68 @@ async function parsePdf(file: File) {
   };
 }
 
-function collectEpubBlocks(root: ParentNode, sectionId: string) {
-  const blocks: BookBlock[] = [];
-  const selectors = "h1, h2, h3, h4, p, li, blockquote, pre";
-  const nodes = Array.from(root.querySelectorAll(selectors));
-
-  nodes.forEach((node, index) => {
-    const text = node.textContent?.replace(/\s+/g, " ").trim() ?? "";
-    if (!text) {
-      return;
-    }
-
-    const tagName = node.tagName.toLowerCase();
-    const kind: BookBlock["kind"] =
-      tagName === "h1"
-        ? "title"
-        : tagName === "h2" || tagName === "h3" || tagName === "h4"
-          ? "subtitle"
-          : tagName === "blockquote"
-            ? "quote"
-            : tagName === "li"
-              ? "list"
-              : tagName === "pre"
-                ? "code"
-                : "paragraph";
-
-    blocks.push(buildBlock(`${sectionId}_block_${index + 1}`, kind, text));
-  });
-
-  if (blocks.length === 0) {
-    const fallback = root.textContent?.replace(/\s+/g, " ").trim() ?? "";
-    if (fallback) {
-      blocks.push(buildBlock(`${sectionId}_block_1`, "paragraph", fallback));
-    }
-  }
-
-  return blocks;
-}
-
 async function parseEpub(file: File) {
   const { default: ePub } = await import("epubjs");
   const book = ePub(await file.arrayBuffer());
   await book.ready;
-  const spineItems = ((book as unknown as { spine?: { spineItems?: unknown[] } }).spine
-    ?.spineItems ?? []) as Array<{
-    idref?: string;
-    load: (loader: unknown) => Promise<unknown>;
-    unload: () => void;
-  }>;
+  await book.loaded.spine;
+  const spine = (book as unknown as {
+    spine?: {
+      spineItems?: EpubSectionLike[];
+      each?: (callback: (item: EpubSectionLike) => void) => void;
+    };
+  }).spine;
+  const spineItems =
+    spine?.spineItems?.length
+      ? spine.spineItems
+      : (() => {
+          const items: EpubSectionLike[] = [];
+          spine?.each?.((item) => items.push(item));
+          return items;
+        })();
 
   const loadedSections = await Promise.all(
     spineItems.map(async (item, index) => {
-      const chapter = await item.load(book.load.bind(book));
-      const chapterDocument = chapter as { documentElement?: { outerHTML?: string } } | null;
-      const markup =
-        typeof chapter === "string" ? chapter : chapterDocument?.documentElement?.outerHTML ?? "";
-      const doc = new DOMParser().parseFromString(markup, "text/html");
       const id = item.idref || `chapter_${index + 1}`;
-      const blocks = collectEpubBlocks(doc.body ?? doc, id);
-      item.unload();
+      let blocks: BookBlock[] = [];
+
+      if (typeof item.render === "function") {
+        const markup = await item.render();
+        blocks = extractTextFromMarkup(markup).map((block, blockIndex) => ({
+          ...block,
+          id: `${id}_block_${blockIndex + 1}`
+        }));
+      }
+
+      if (blocks.length === 0 && typeof item.load === "function") {
+        const chapter = await item.load(book.load.bind(book));
+        const chapterDocument = chapter as
+          | { textContent?: string; outerHTML?: string; documentElement?: { outerHTML?: string } }
+          | null;
+        const markup =
+          typeof chapter === "string"
+            ? chapter
+            : chapterDocument?.outerHTML ??
+              chapterDocument?.documentElement?.outerHTML ??
+              "";
+
+        blocks =
+          markup.trim().length > 0
+            ? extractTextFromMarkup(markup).map((block, blockIndex) => ({
+                ...block,
+                id: `${id}_block_${blockIndex + 1}`
+              }))
+            : [];
+
+        if (blocks.length === 0) {
+          const fallbackText = chapterDocument?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+          if (fallbackText) {
+            blocks = [buildBlock(`${id}_block_1`, "paragraph", fallbackText)];
+          }
+        }
+      }
+
+      item.unload?.();
 
       return blocksToSection(id, `章节 ${index + 1}`, blocks);
     })
@@ -269,6 +324,10 @@ export async function parseBookFile(file: File): Promise<StoredBook> {
         : format === "docx"
           ? await parseDocx(file)
           : await parseTxtLike(file, format);
+
+  if (parsed.sections.length === 0) {
+    throw new Error("这本书导入成功了，但没能解析出可阅读内容，请换一个文件再试");
+  }
 
   return {
     id: makeId("book"),

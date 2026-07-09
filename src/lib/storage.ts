@@ -5,9 +5,7 @@ const DB_NAME = "reader-notes-sync";
 const BOOKS = "books";
 const NOTES = "notes";
 
-let dbPromise:
-  | ReturnType<typeof openDB>
-  | null = null;
+let dbPromise: ReturnType<typeof openDB> | null = null;
 
 function getDb() {
   if (typeof window === "undefined") {
